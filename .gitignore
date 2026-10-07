@@ -1,0 +1,33 @@
+# Local Codex/agent runtime state
+.agents/
+.codex/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Go build outputs and test artifacts
+bin/
+/server
+dist/
+coverage.out
+*.test
+
+# Runtime data: uploaded audio, SQLite databases, and downloaded STT models
+data/
+uploads/
+models/
+third_party/
+*.db
+*.db-shm
+*.db-wal

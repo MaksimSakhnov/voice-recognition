@@ -1,0 +1,9 @@
+.git
+.agents
+.codex
+.idea
+.env
+data
+models
+third_party
+server
