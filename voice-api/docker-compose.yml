@@ -1,7 +1,31 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: voice
+      POSTGRES_USER: voice
+      POSTGRES_PASSWORD: voice
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice -d voice"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   voice-api:
     build: .
     ports:
       - "8080:8080"
     volumes:
       - ./models:/models:ro
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: postgres://voice:voice@postgres:5432/voice?sslmode=disable
+      UPLOAD_DIR: /app/data/audio
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

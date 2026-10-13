@@ -10,6 +10,8 @@ import (
 
 type Config struct {
 	HTTPAddr        string
+	DatabaseURL     string
+	UploadDir       string
 	MaxUploadBytes  int64
 	WhisperBinary   string
 	WhisperModel    string
@@ -21,13 +23,15 @@ type Config struct {
 func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:       env("HTTP_ADDR", ":8080"),
+		DatabaseURL:    env("DATABASE_URL", "postgres://voice:voice@localhost:5432/voice?sslmode=disable"),
+		UploadDir:      env("UPLOAD_DIR", "./data/audio"),
 		MaxUploadBytes: int64Env("MAX_UPLOAD_MB", 100) * 1024 * 1024,
 		WhisperBinary:  env("WHISPER_BINARY", "whisper-cli"), WhisperModel: env("WHISPER_MODEL", "./models/ggml-large-v3-turbo-q8_0.bin"),
 		WhisperThreads: intEnv("WHISPER_THREADS", 6), ShutdownTimeout: durationEnv("SHUTDOWN_TIMEOUT", 20*time.Second),
 		LogLevel: logLevel(env("LOG_LEVEL", "INFO")),
 	}
-	if cfg.MaxUploadBytes < 1 || cfg.WhisperThreads < 1 {
-		return Config{}, fmt.Errorf("MAX_UPLOAD_MB and WHISPER_THREADS must be positive")
+	if cfg.MaxUploadBytes < 1 || cfg.WhisperThreads < 1 || cfg.DatabaseURL == "" || cfg.UploadDir == "" {
+		return Config{}, fmt.Errorf("MAX_UPLOAD_MB and WHISPER_THREADS must be positive; DATABASE_URL and UPLOAD_DIR are required")
 	}
 	return cfg, nil
 }

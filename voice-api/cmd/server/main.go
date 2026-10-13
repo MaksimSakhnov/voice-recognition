@@ -12,7 +12,11 @@ import (
 
 	"voice-api/internal/api"
 	"voice-api/internal/config"
+	"voice-api/internal/database"
+	"voice-api/internal/jobs"
 	"voice-api/internal/stt"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -26,7 +30,19 @@ func main() {
 	if err := transcriber.Validate(); err != nil {
 		fatal(err)
 	}
-	handler := api.NewServer(transcriber, cfg.MaxUploadBytes, logger)
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		fatal(err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(context.Background()); err != nil {
+		fatal(err)
+	}
+	if err := database.Migrate(context.Background(), pool); err != nil {
+		fatal(err)
+	}
+	repository := jobs.NewRepository(pool)
+	handler := api.NewServer(repository, cfg.MaxUploadBytes, cfg.UploadDir, logger)
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: handler.Routes(), ReadHeaderTimeout: 5 * time.Second}
 
 	go func() {

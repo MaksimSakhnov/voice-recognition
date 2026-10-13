@@ -8,25 +8,31 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
-	"voice-api/internal/stt"
+	"voice-api/internal/jobs"
 )
 
 type Server struct {
-	transcriber stt.Transcriber
-	maxBytes    int64
-	logger      *slog.Logger
+	maxBytes  int64
+	uploadDir string
+	jobs      *jobs.Repository
+	logger    *slog.Logger
 }
 
-func NewServer(transcriber stt.Transcriber, maxBytes int64, logger *slog.Logger) *Server {
-	return &Server{transcriber: transcriber, maxBytes: maxBytes, logger: logger}
+func NewServer(repository *jobs.Repository, maxBytes int64, uploadDir string, logger *slog.Logger) *Server {
+	return &Server{jobs: repository, maxBytes: maxBytes, uploadDir: uploadDir, logger: logger}
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
-	mux.HandleFunc("POST /v1/transcriptions", s.transcribe)
+	mux.HandleFunc("POST /audio", s.createJob)
+	mux.HandleFunc("GET /jobs", s.listJobs)
+	mux.HandleFunc("GET /jobs/{id}", s.getJob)
+	mux.HandleFunc("GET /jobs/{id}/transcript", s.getTranscript)
+	mux.HandleFunc("GET /search", s.search)
 	return s.recover(mux)
 }
 
@@ -34,7 +40,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxBytes)
 	defer r.Body.Close()
 	reader, err := r.MultipartReader()
@@ -59,16 +65,21 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	temp, err := os.CreateTemp("", "voice-api-*.wav")
+	if err := os.MkdirAll(s.uploadDir, 0o750); err != nil {
+		s.logger.Error("create upload directory", "error", err)
+		fail(w, http.StatusInternalServerError, "prepare audio storage")
+		return
+	}
+	temp, err := os.CreateTemp(s.uploadDir, "audio-*.wav")
 	if err != nil {
 		s.logger.Error("create temporary audio file", "error", err)
 		fail(w, http.StatusInternalServerError, "prepare audio")
 		return
 	}
 	tempPath := temp.Name()
-	defer os.Remove(tempPath)
 	if _, err = io.Copy(temp, part); err != nil {
 		_ = temp.Close()
+		_ = os.Remove(tempPath)
 		if errors.As(err, new(*http.MaxBytesError)) {
 			fail(w, http.StatusRequestEntityTooLarge, "audio is too large")
 		} else {
@@ -77,6 +88,7 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = temp.Close(); err != nil {
+		_ = os.Remove(tempPath)
 		fail(w, http.StatusInternalServerError, "save audio")
 		return
 	}
@@ -85,13 +97,83 @@ func (s *Server) transcribe(w http.ResponseWriter, r *http.Request) {
 	if language == "" {
 		language = "ru"
 	}
-	text, err := s.transcriber.Transcribe(r.Context(), tempPath, language)
+	job, err := s.jobs.Create(r.Context(), fileName, tempPath, language)
 	if err != nil {
-		s.logger.Error("transcription failed", "file_name", fileName, "error", err)
-		fail(w, http.StatusUnprocessableEntity, "speech recognition failed")
+		_ = os.Remove(tempPath)
+		s.logger.Error("create job", "file_name", fileName, "error", err)
+		fail(w, http.StatusInternalServerError, "create job")
 		return
 	}
-	respond(w, http.StatusOK, map[string]string{"text": text})
+	respond(w, http.StatusCreated, map[string]string{"jobId": job.ID})
+}
+
+func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
+	items, err := s.jobs.List(r.Context(), queryLimit(r, 100))
+	if err != nil {
+		s.logger.Error("list jobs", "error", err)
+		fail(w, http.StatusInternalServerError, "list jobs")
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"jobs": items})
+}
+
+func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
+	job, err := s.jobs.Get(r.Context(), r.PathValue("id"))
+	if errors.Is(err, jobs.ErrNotFound) {
+		fail(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("get job", "error", err)
+		fail(w, http.StatusInternalServerError, "get job")
+		return
+	}
+	respond(w, http.StatusOK, job)
+}
+
+func (s *Server) getTranscript(w http.ResponseWriter, r *http.Request) {
+	job, err := s.jobs.Get(r.Context(), r.PathValue("id"))
+	if errors.Is(err, jobs.ErrNotFound) {
+		fail(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("get transcript", "error", err)
+		fail(w, http.StatusInternalServerError, "get transcript")
+		return
+	}
+	if job.Status != jobs.StatusCompleted || job.Transcript == nil {
+		fail(w, http.StatusConflict, "transcript is not ready; job status: "+string(job.Status))
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"jobId": job.ID, "text": *job.Transcript})
+}
+
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		fail(w, http.StatusBadRequest, "query parameter q is required")
+		return
+	}
+	items, err := s.jobs.Search(r.Context(), query, queryLimit(r, 50))
+	if err != nil {
+		s.logger.Error("search transcripts", "error", err)
+		fail(w, http.StatusInternalServerError, "search transcripts")
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"results": items})
+}
+
+func queryLimit(r *http.Request, fallback int) int {
+	value := r.URL.Query().Get("limit")
+	if value == "" {
+		return fallback
+	}
+	limit, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return limit
 }
 
 func (s *Server) recover(next http.Handler) http.Handler {

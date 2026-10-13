@@ -21,12 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && useradd --system --uid 10001 --create-home app
 COPY --from=go-build /out/voice-recognition /usr/local/bin/voice-recognition
 COPY --from=whisper-build /src/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
+RUN mkdir -p /app/data/audio && chown -R app:app /app/data
 USER app
 WORKDIR /app
 ENV HTTP_ADDR=:8080 \
     WHISPER_BINARY=/usr/local/bin/whisper-cli \
     WHISPER_MODEL=/models/ggml-large-v3-turbo-q8_0.bin \
     MAX_UPLOAD_MB=100 \
-    WHISPER_THREADS=6
+    WHISPER_THREADS=6 \
+    UPLOAD_DIR=/app/data/audio
 EXPOSE 8080
 ENTRYPOINT ["voice-recognition"]
