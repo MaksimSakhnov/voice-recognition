@@ -44,7 +44,7 @@ func (w WhisperCPP) Transcribe(ctx context.Context, audioPath, language string) 
 	defer os.Remove(outputPath)
 	defer os.Remove(outputPath + ".txt")
 
-	output, err := exec.CommandContext(ctx, w.binary, "-m", w.model, "-f", audioPath, "-l", language, "-t", fmt.Sprint(w.threads), "--no-timestamps", "--print-progress", "false", "-otxt", "-of", outputPath).CombinedOutput()
+	output, err := exec.CommandContext(ctx, w.binary, "-m", w.model, "-f", audioPath, "-l", language, "-t", fmt.Sprint(w.threads), "--no-timestamps", "-otxt", "-of", outputPath).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("whisper.cpp: %w: %s", err, strings.TrimSpace(string(output)))
 	}

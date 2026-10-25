@@ -1,0 +1,256 @@
+openapi: 3.0.3
+info:
+  title: Voice Recognition API
+  version: 1.0.0
+  description: >-
+    Asynchronous local speech recognition via whisper.cpp. Uploading a WAV file
+    creates a job; poll its status and then request the transcript.
+servers:
+  - url: http://localhost:18080
+paths:
+  /healthz:
+    get:
+      summary: Check service availability
+      responses:
+        '200':
+          description: Service is available
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /audio:
+    post:
+      summary: Upload a WAV file and create a recognition job
+      description: >-
+        The request is saved streamingly. The response is returned before speech
+        recognition completes. Only WAV files are accepted.
+      parameters:
+        - $ref: '#/components/parameters/Language'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: WAV audio file
+      responses:
+        '201':
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: Audio exceeds MAX_UPLOAD_MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: The uploaded file does not have a .wav extension
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Queue is full or service is shutting down
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /jobs:
+    get:
+      summary: List recognition jobs
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Jobs sorted by creation time, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Job'
+  /jobs/{id}:
+    get:
+      summary: Get job state
+      parameters:
+        - $ref: '#/components/parameters/JobID'
+      responses:
+        '200':
+          description: Job state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{id}/transcript:
+    get:
+      summary: Get completed transcript
+      parameters:
+        - $ref: '#/components/parameters/JobID'
+      responses:
+        '200':
+          description: Completed transcript
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transcript'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Recognition has not completed yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /search:
+    get:
+      summary: Search completed transcripts
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Case-insensitive literal substring to find
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Matching transcript fragments
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+components:
+  parameters:
+    JobID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Language:
+      name: language
+      in: query
+      required: false
+      schema:
+        type: string
+        default: ru
+      description: Language code forwarded to whisper.cpp
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+      description: Maximum number of returned items
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Job was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    JobCreated:
+      type: object
+      required: [jobId]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+    Job:
+      type: object
+      required: [jobId, fileName, language, status, createdAt]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          example: meeting.wav
+        language:
+          type: string
+          example: ru
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        error:
+          type: string
+          description: Present only for failed jobs
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+    Transcript:
+      type: object
+      required: [jobId, text]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        text:
+          type: string
+    SearchResult:
+      type: object
+      required: [jobId, fileName, fragment, finishedAt]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        fragment:
+          type: string
+        finishedAt:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

@@ -15,14 +15,21 @@ services:
 
   voice-api:
     build: .
+    # ./data is a bind mount and may be created by Docker as root.  Start the
+    # API as root so it can create ./data/audio on a fresh checkout.
+    user: "0:0"
     ports:
-      - "8080:8080"
+      - "18080:18080"
     volumes:
       - ./models:/models:ro
       - ./data:/app/data
     environment:
       DATABASE_URL: postgres://voice:voice@postgres:5432/voice?sslmode=disable
       UPLOAD_DIR: /app/data/audio
+      WORKERS: ${WORKERS:-2}
+      QUEUE_SIZE: ${QUEUE_SIZE:-50}
+      WHISPER_THREADS: ${WHISPER_THREADS:-6}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-20s}
     depends_on:
       postgres:
         condition: service_healthy

@@ -10,11 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"voice-api/internal/api"
 	"voice-api/internal/config"
+	"voice-api/internal/controller"
 	"voice-api/internal/database"
 	"voice-api/internal/jobs"
+	"voice-api/internal/service"
 	"voice-api/internal/stt"
+	"voice-api/internal/worker"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -42,7 +44,17 @@ func main() {
 		fatal(err)
 	}
 	repository := jobs.NewRepository(pool)
-	handler := api.NewServer(repository, cfg.MaxUploadBytes, cfg.UploadDir, logger)
+	interrupted, err := repository.RequeueInterrupted(context.Background())
+	if err != nil {
+		fatal(err)
+	}
+	workers := worker.New(repository, transcriber, cfg.QueueSize, logger)
+	workers.Start(cfg.Workers)
+	recoveryContext, cancelRecovery := context.WithCancel(context.Background())
+	defer cancelRecovery()
+	go workers.Restore(recoveryContext, interrupted)
+	jobService := service.NewJobService(repository, workers, cfg.UploadDir, logger)
+	handler := controller.NewHTTPController(jobService, cfg.MaxUploadBytes, logger)
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: handler.Routes(), ReadHeaderTimeout: 5 * time.Second}
 
 	go func() {
@@ -56,11 +68,15 @@ func main() {
 	defer stop()
 	<-signalContext.Done()
 	logger.Info("shutdown signal received")
+	jobService.StopAccepting()
 
 	shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownContext); err != nil {
 		logger.Error("HTTP shutdown failed", "error", err)
+	}
+	if err := workers.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		logger.Error("workers shutdown failed", "error", err)
 	}
 }
 

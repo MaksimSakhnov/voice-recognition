@@ -4,12 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrNotFound = errors.New("job not found")
+
+// Store is the persistence boundary used by application services and workers.
+type Store interface {
+	Create(ctx context.Context, fileName, audioPath, language string) (Job, error)
+	Get(ctx context.Context, id string) (Job, error)
+	List(ctx context.Context, limit int) ([]Job, error)
+	MarkProcessing(ctx context.Context, id string) error
+	MarkCompleted(ctx context.Context, id, transcript string) error
+	MarkFailed(ctx context.Context, id, message string) error
+	RequeueProcessing(ctx context.Context, id string) error
+	DeleteQueued(ctx context.Context, id string) error
+	RequeueInterrupted(ctx context.Context) ([]Job, error)
+	Search(ctx context.Context, query string, limit int) ([]SearchResult, error)
+}
 
 type Repository struct{ pool *pgxpool.Pool }
 
@@ -60,6 +75,16 @@ func (r *Repository) MarkFailed(ctx context.Context, id, message string) error {
 	return r.updateOne(ctx, `update jobs set status = 'failed', error_message = $2, finished_at = now() where id = $1 and status = 'processing'`, id, message)
 }
 
+// RequeueProcessing returns an interrupted job to the queue without losing its history.
+func (r *Repository) RequeueProcessing(ctx context.Context, id string) error {
+	return r.updateOne(ctx, `update jobs set status = 'queued', started_at = null, finished_at = null, error_message = null where id = $1 and status = 'processing'`, id)
+}
+
+// DeleteQueued removes a job that could not be admitted to the bounded queue.
+func (r *Repository) DeleteQueued(ctx context.Context, id string) error {
+	return r.updateOne(ctx, `delete from jobs where id = $1 and status = 'queued'`, id)
+}
+
 func (r *Repository) RequeueInterrupted(ctx context.Context) ([]Job, error) {
 	rows, err := r.pool.Query(ctx, `update jobs set status = 'queued', started_at = null where status in ('queued', 'processing') returning `+jobColumns)
 	if err != nil {
@@ -81,7 +106,8 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Sea
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
-	rows, err := r.pool.Query(ctx, `select id::text, original_filename, substring(transcript from greatest(strpos(lower(transcript), lower($1)) - 80, 1) for 240), finished_at from jobs where status = 'completed' and transcript ilike '%' || $1 || '%' order by finished_at desc limit $2`, query, limit)
+	pattern := escapeLike(query)
+	rows, err := r.pool.Query(ctx, `select id::text, original_filename, substring(transcript from greatest(strpos(lower(transcript), lower($2)) - 80, 1) for 240), finished_at from jobs where status = 'completed' and transcript ilike '%' || $1 || '%' escape '\' order by finished_at desc limit $3`, pattern, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search transcripts: %w", err)
 	}
@@ -95,6 +121,12 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Sea
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// escapeLike keeps search semantics literal: '%' and '_' from a user query are
+// characters, not PostgreSQL LIKE wildcards. The backslash is the ESCAPE token.
+func escapeLike(query string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
 }
 
 func (r *Repository) updateOne(ctx context.Context, query string, args ...any) error {
