@@ -12,7 +12,7 @@ import (
 	"voice-api/internal/stt"
 )
 
-// Pool owns a bounded job queue and a fixed number of transcription workers.
+// Pool владеет ограниченной очередью заданий и фиксированным числом worker'ов распознавания.
 type Pool struct {
 	repository  jobs.Store
 	transcriber stt.Transcriber
@@ -40,7 +40,7 @@ func (p *Pool) Start(workers int) {
 	}
 }
 
-// Submit never blocks an HTTP handler. A full queue is reported to the caller.
+// Submit никогда не блокирует HTTP-обработчик. О заполненной очереди сообщается вызывающему коду.
 func (p *Pool) Submit(job jobs.Job) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -55,8 +55,8 @@ func (p *Pool) Submit(job jobs.Job) error {
 	}
 }
 
-// Restore feeds jobs found after an unclean restart. It is intentionally run by
-// one goroutine, so recovery cannot create a goroutine per pending job.
+// Restore передаёт в очередь задания, найденные после аварийного завершения.
+// Метод намеренно выполняется в одной goroutine, чтобы не создавать её на каждое ожидающее задание.
 func (p *Pool) Restore(ctx context.Context, pending []jobs.Job) {
 	for _, job := range pending {
 		p.mu.Lock()
@@ -75,8 +75,8 @@ func (p *Pool) Restore(ctx context.Context, pending []jobs.Job) {
 	}
 }
 
-// Shutdown rejects new jobs, drains queued work until ctx expires, then cancels
-// an in-flight whisper process. Queued jobs remain queued in PostgreSQL.
+// Shutdown отклоняет новые задания, обрабатывает очередь до истечения ctx, затем
+// отменяет выполняющийся процесс whisper. Ожидающие задания остаются в PostgreSQL.
 func (p *Pool) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	p.accepting = false
@@ -90,7 +90,9 @@ func (p *Pool) Shutdown(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		p.cancel()
-		<-done
+		// Transcriber обязан учитывать контекст, но внешний процесс может зависнуть
+		// на уровне ОС. Не превращаем ограниченное корректное завершение в ожидание
+		// без срока: его строка в состоянии processing восстановится при следующем запуске.
 		return ctx.Err()
 	}
 }
@@ -102,7 +104,7 @@ func (p *Pool) run() {
 		case job := <-p.queue:
 			p.process(job)
 		case <-p.stop:
-			// Prefer already queued work during a graceful shutdown.
+			// При корректном завершении сначала обрабатываем уже принятые задания.
 			select {
 			case job := <-p.queue:
 				p.process(job)

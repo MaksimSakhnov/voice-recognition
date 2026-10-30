@@ -1,8 +1,17 @@
-.git
-.agents
-.codex
-.idea
+# Runtime uploads and inaccessible Docker-owned recovery data are never build inputs.
+data/
+.data-docker-permissions-backup/
+
+# Local benchmark fixtures and development metadata are not needed by the image.
+test-audio/
+.git/
+.agents/
+.codex/
+.idea/
+.vscode/
 .env
-data
-models
+models/
 server
+README.md
+TASK.md
+benchmark-result-cpu.md

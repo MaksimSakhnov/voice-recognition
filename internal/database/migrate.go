@@ -12,7 +12,7 @@ import (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// Migrate applies each numbered SQL migration exactly once.
+// Migrate применяет каждую пронумерованную SQL-миграцию ровно один раз.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, `create table if not exists schema_migrations (version text primary key, applied_at timestamptz not null default now())`); err != nil {
 		return fmt.Errorf("create migration ledger: %w", err)

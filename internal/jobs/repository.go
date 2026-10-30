@@ -12,7 +12,7 @@ import (
 
 var ErrNotFound = errors.New("job not found")
 
-// Store is the persistence boundary used by application services and workers.
+// Store — граница постоянного хранилища, используемая сервисами приложения и worker'ами.
 type Store interface {
 	Create(ctx context.Context, fileName, audioPath, language string) (Job, error)
 	Get(ctx context.Context, id string) (Job, error)
@@ -75,12 +75,12 @@ func (r *Repository) MarkFailed(ctx context.Context, id, message string) error {
 	return r.updateOne(ctx, `update jobs set status = 'failed', error_message = $2, finished_at = now() where id = $1 and status = 'processing'`, id, message)
 }
 
-// RequeueProcessing returns an interrupted job to the queue without losing its history.
+// RequeueProcessing возвращает прерванное задание в очередь, не теряя его историю.
 func (r *Repository) RequeueProcessing(ctx context.Context, id string) error {
 	return r.updateOne(ctx, `update jobs set status = 'queued', started_at = null, finished_at = null, error_message = null where id = $1 and status = 'processing'`, id)
 }
 
-// DeleteQueued removes a job that could not be admitted to the bounded queue.
+// DeleteQueued удаляет задание, которое не удалось принять в ограниченную очередь.
 func (r *Repository) DeleteQueued(ctx context.Context, id string) error {
 	return r.updateOne(ctx, `delete from jobs where id = $1 and status = 'queued'`, id)
 }
@@ -123,8 +123,8 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Sea
 	return result, rows.Err()
 }
 
-// escapeLike keeps search semantics literal: '%' and '_' from a user query are
-// characters, not PostgreSQL LIKE wildcards. The backslash is the ESCAPE token.
+// escapeLike сохраняет буквальную семантику поиска: '%' и '_' из запроса
+// пользователя — символы, а не wildcard-выражения PostgreSQL LIKE. Обратная косая черта — ESCAPE-символ.
 func escapeLike(query string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
 }

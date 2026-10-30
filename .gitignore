@@ -1,13 +1,9 @@
-# Local Codex/agent runtime state
 .agents/
 .codex/
-
-# IDE and editor files
 .idea/
 .vscode/
 *.iml
 
-# OS-generated files
 .DS_Store
 Thumbs.db
 
@@ -22,6 +18,7 @@ bin/
 dist/
 coverage.out
 *.test
+test-audio/
 
 # Runtime data: uploaded audio, SQLite databases, and downloaded STT models
 data/

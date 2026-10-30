@@ -1,0 +1,15 @@
+# Необязательный вариант для NVIDIA GPU. Используйте вместе с docker-compose.yml:
+# docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+services:
+  voice-api:
+    build:
+      target: gpu
+      args:
+        CUDA_ARCHITECTURES: ${CUDA_ARCHITECTURES:-89}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

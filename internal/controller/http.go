@@ -1,4 +1,4 @@
-// Package controller adapts HTTP requests to application services.
+// Пакет controller адаптирует HTTP-запросы для сервисов приложения.
 package controller
 
 import (
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -60,10 +61,25 @@ func (c *HTTPController) createJob(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "expected multipart/form-data")
 		return
 	}
-	part, err := reader.NextPart()
-	if err != nil || part.FormName() != "file" {
-		fail(w, http.StatusBadRequest, "multipart field file is required")
-		return
+	var part *multipart.Part
+	for {
+		part, err = reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			fail(w, http.StatusBadRequest, "multipart field file is required")
+			return
+		}
+		if err != nil {
+			if errors.As(err, new(*http.MaxBytesError)) {
+				fail(w, http.StatusRequestEntityTooLarge, "audio is too large")
+				return
+			}
+			fail(w, http.StatusBadRequest, "read multipart form")
+			return
+		}
+		if part.FormName() == "file" {
+			break
+		}
+		_ = part.Close()
 	}
 	defer part.Close()
 	fileName := filepath.Base(part.FileName())
@@ -88,6 +104,8 @@ func (c *HTTPController) writeCreateError(w http.ResponseWriter, err error) {
 		fail(w, http.StatusServiceUnavailable, "recognition queue is full")
 	case service.IsStopping(err):
 		fail(w, http.StatusServiceUnavailable, "service is shutting down")
+	case errors.Is(err, service.ErrInvalidLanguage):
+		fail(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, io.ErrUnexpectedEOF):
 		fail(w, http.StatusBadRequest, "read audio")
 	default:

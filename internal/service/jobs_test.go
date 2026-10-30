@@ -14,23 +14,27 @@ import (
 )
 
 type storeStub struct {
-	created jobs.Job
-	get     jobs.Job
-	getErr  error
-	deleted string
+	created   jobs.Job
+	get       jobs.Job
+	getErr    error
+	deleted   string
+	deleteErr error
 }
 
 func (s *storeStub) Create(_ context.Context, name, path, language string) (jobs.Job, error) {
 	s.created = jobs.Job{ID: "job-1", OriginalFilename: name, AudioPath: path, Language: language, Status: jobs.StatusQueued}
 	return s.created, nil
 }
-func (s *storeStub) Get(context.Context, string) (jobs.Job, error)          { return s.get, s.getErr }
-func (s *storeStub) List(context.Context, int) ([]jobs.Job, error)          { return nil, nil }
-func (s *storeStub) MarkProcessing(context.Context, string) error           { return nil }
-func (s *storeStub) MarkCompleted(context.Context, string, string) error    { return nil }
-func (s *storeStub) MarkFailed(context.Context, string, string) error       { return nil }
-func (s *storeStub) RequeueProcessing(context.Context, string) error        { return nil }
-func (s *storeStub) DeleteQueued(_ context.Context, id string) error        { s.deleted = id; return nil }
+func (s *storeStub) Get(context.Context, string) (jobs.Job, error)       { return s.get, s.getErr }
+func (s *storeStub) List(context.Context, int) ([]jobs.Job, error)       { return nil, nil }
+func (s *storeStub) MarkProcessing(context.Context, string) error        { return nil }
+func (s *storeStub) MarkCompleted(context.Context, string, string) error { return nil }
+func (s *storeStub) MarkFailed(context.Context, string, string) error    { return nil }
+func (s *storeStub) RequeueProcessing(context.Context, string) error     { return nil }
+func (s *storeStub) DeleteQueued(_ context.Context, id string) error {
+	s.deleted = id
+	return s.deleteErr
+}
 func (s *storeStub) RequeueInterrupted(context.Context) ([]jobs.Job, error) { return nil, nil }
 func (s *storeStub) Search(context.Context, string, int) ([]jobs.SearchResult, error) {
 	return nil, nil
@@ -80,6 +84,22 @@ func TestCreateAudioCleansUpWhenQueueIsFull(t *testing.T) {
 	}
 }
 
+func TestCreateAudioRetainsAudioWhenRejectedJobCannotBeDeleted(t *testing.T) {
+	store := &storeStub{deleteErr: errors.New("database unavailable")}
+	service := NewJobService(store, &submitterStub{err: queue.ErrFull}, t.TempDir(), testLogger())
+
+	_, err := service.CreateAudio(context.Background(), "sample.wav", "", strings.NewReader("audio data"))
+	if !errors.Is(err, queue.ErrFull) {
+		t.Fatalf("error = %v, want queue full", err)
+	}
+	if store.deleted != "job-1" {
+		t.Fatalf("deleted job = %q, want job-1", store.deleted)
+	}
+	if _, err := os.Stat(store.created.AudioPath); err != nil {
+		t.Fatalf("audio must be retained for recovery: %v", err)
+	}
+}
+
 func TestTranscript(t *testing.T) {
 	text := "готовый текст"
 	store := &storeStub{get: jobs.Job{ID: "job-1", Status: jobs.StatusCompleted, Transcript: &text}}
@@ -101,6 +121,14 @@ func TestCreateAudioRejectsDuringShutdown(t *testing.T) {
 	_, err := service.CreateAudio(context.Background(), "sample.wav", "ru", strings.NewReader("audio"))
 	if !errors.Is(err, ErrNotAccepting) {
 		t.Fatalf("error = %v, want ErrNotAccepting", err)
+	}
+}
+
+func TestCreateAudioRejectsLanguageThatDoesNotFitStorage(t *testing.T) {
+	service := NewJobService(&storeStub{}, &submitterStub{}, t.TempDir(), testLogger())
+	_, err := service.CreateAudio(context.Background(), "sample.wav", strings.Repeat("a", 17), strings.NewReader("audio"))
+	if !errors.Is(err, ErrInvalidLanguage) {
+		t.Fatalf("error = %v, want ErrInvalidLanguage", err)
 	}
 }
 

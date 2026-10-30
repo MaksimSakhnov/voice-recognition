@@ -1,4 +1,4 @@
-// Package queue defines the boundary between job orchestration and its executor.
+// Пакет queue определяет границу между оркестрацией заданий и их исполнителем.
 package queue
 
 import (
@@ -10,7 +10,7 @@ import (
 var ErrFull = errors.New("recognition queue is full")
 var ErrStopped = errors.New("recognition queue is stopping")
 
-// Submitter accepts a job for asynchronous processing.
+// Submitter принимает задание для асинхронной обработки.
 type Submitter interface {
 	Submit(jobs.Job) error
 }

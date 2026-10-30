@@ -53,6 +53,17 @@ type transcriberStub struct {
 	err  error
 }
 
+type blockingTranscriber struct {
+	started chan struct{}
+	block   chan struct{}
+}
+
+func (t blockingTranscriber) Transcribe(context.Context, string, string) (string, error) {
+	close(t.started)
+	<-t.block
+	return "", context.Canceled
+}
+
 func (t transcriberStub) Transcribe(context.Context, string, string) (string, error) {
 	return t.text, t.err
 }
@@ -111,6 +122,28 @@ func TestPoolMarksFailedJobAndKeepsWorkerRunning(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("job was not marked failed")
 	}
+}
+
+func TestShutdownReturnsWhenTranscriberIgnoresCancellation(t *testing.T) {
+	store := &workerStoreStub{completed: make(chan string, 1), failed: make(chan string, 1)}
+	transcriber := blockingTranscriber{started: make(chan struct{}), block: make(chan struct{})}
+	pool := newTestPool(store, transcriber)
+	pool.Start(1)
+	if err := pool.Submit(jobs.Job{ID: "job-1"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-transcriber.started:
+	case <-time.After(time.Second):
+		t.Fatal("transcriber did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := pool.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() error = %v, want deadline exceeded", err)
+	}
+	close(transcriber.block)
 }
 
 var _ jobs.Store = (*workerStoreStub)(nil)

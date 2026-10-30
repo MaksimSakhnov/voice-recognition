@@ -91,6 +91,42 @@ func TestCreateJobRejectsUnsupportedExtension(t *testing.T) {
 	}
 }
 
+func TestCreateJobFindsFileAfterOtherMultipartFields(t *testing.T) {
+	store := &controllerStoreStub{}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("metadata", "example"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "sample.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("RIFF test wav")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/audio", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	controllerHandler(t, store, controllerSubmitterStub{}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusCreated)
+	}
+}
+
+func TestCreateJobRejectsTooLongLanguage(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := multipartRequest(t, "sample.wav")
+	request.URL.RawQuery = "language=" + strings.Repeat("a", 17)
+	controllerHandler(t, &controllerStoreStub{}, controllerSubmitterStub{}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
 func TestTranscriptReturnsConflictUntilCompleted(t *testing.T) {
 	store := &controllerStoreStub{job: jobs.Job{ID: "job-1", Status: jobs.StatusProcessing}}
 	recorder := httptest.NewRecorder()

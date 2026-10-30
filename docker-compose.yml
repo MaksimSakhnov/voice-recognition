@@ -14,9 +14,11 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   voice-api:
-    build: .
-    # ./data is a bind mount and may be created by Docker as root.  Start the
-    # API as root so it can create ./data/audio on a fresh checkout.
+    build:
+      context: .
+      target: cpu
+    # ./data — bind mount, который Docker может создать от root. API запускается
+    # от root, чтобы создать ./data/audio в чистом клоне репозитория.
     user: "0:0"
     ports:
       - "18080:18080"
